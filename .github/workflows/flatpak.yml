@@ -1,0 +1,32 @@
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+name: Flatpak Build
+jobs:
+  flatpak:
+    name: "Flatpak"
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-47
+      options: --privileged
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Setup Flatpak Builder
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: bottles.flatpak
+          manifest-path: com.usebottles.bottles.yml
+          cache-key: flatpak-builder-${{ github.sha }}
+          upload-artifact: true
+        continue-on-error: true
+        id: flatpak-builder
+      - name: Upload logs on failure
+        if: steps.flatpak-builder.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: ./.flatpak-builder/build/*
+          retention-days: 5
