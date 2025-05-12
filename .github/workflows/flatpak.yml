@@ -6,33 +6,60 @@ on:
 name: Flatpak Build
 jobs:
   flatpak:
-    name: "Flatpak"
-    runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/flathub-infra/flatpak-builder-lint:unprivileged
+    name: "Flatpak Build"
+    strategy:
+      matrix:
+        variant:
+          - arch: x86_64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.variant.runner }}
+    env:
+      FLATPAK_BUILDER_REPO: repo
+      FLATPAK_BUILDER_APPID: com.usebottles.bottles
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Setup Flatpak repositories
+      - name: Install Flatpak Builder
         run: |
-            flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-            flatpak remote-add --if-not-exists flathub-beta https://flathub.org/beta-repo/flathub-beta.flatpakrepo
-            flatpak remote-add --if-not-exists gnome-nightly https://nightly.gnome.org/gnome-nightly.flatpakrepo
-      - name: Allow unprivileged user namespaces
-        run: sudo sysctl kernel.unprivileged_userns_clone=1
-      - name: Setup Flatpak Builder
-        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+            sudo apt update
+            sudo apt upgrade -y
+            sudo apt install -y flatpak flatpak-builder
+      - name: Add Flatpak repositories
+        run: |
+            flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo
+            flatpak remote-add --if-not-exists --user flathub-beta https://flathub.org/beta-repo/flathub-beta.flatpakrepo
+            flatpak remote-add --if-not-exists --user gnome-nightly https://nightly.gnome.org/gnome-nightly.flatpakrepo
+      - name: Cache Flatpak Builder
+        id: flatpak-builder-cache
+        uses: actions/cache@v4
         with:
-          bundle: bottles.flatpak
-          manifest-path: com.usebottles.bottles.yml
-          cache-key: flatpak-builder-${{ github.sha }}
-          upload-artifact: true
-        continue-on-error: true
-        id: flatpak-builder
-      - name: Upload logs on failure
-        if: steps.flatpak-builder.outcome == 'failure'
+          path: .flatpak-builder
+          key: flatpak-builder-${{ matrix.variant.arch }}
+      - name: Build Flatpak
+        run: |
+            flatpak-builder                           \
+              --repo=${{ env.FLATPAK_BUILDER_REPO }}  \
+              --disable-rofiles-fuse                  \
+              --install-deps-from=flathub             \
+              --force-clean                           \
+              --default-branch=${{ github.ref_name }} \
+              --arch=${{ matrix.variant.arch }}       \
+              --ccache                                \
+              --user                                  \
+              flatpak_app                           \
+              ${{ env.FLATPAK_BUILDER_APPID }}.yml
+      - name: Bundle Flatpak
+        run: |
+            flatpak                                                       \
+              build-bundle                                                \
+              ${{ env.FLATPAK_BUILDER_REPO }}                             \
+              ${{ env.FLATPAK_BUILDER_APPID }}.flatpak                  \
+              --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
+              --arch=${{ matrix.variant.arch }}                           \
+              ${{ env.FLATPAK_BUILDER_APPID }}                            \
+              ${{ github.ref_name }}
+      - name: Upload Flatpak Bundle
         uses: actions/upload-artifact@v4
         with:
-          name: build-logs
-          path: ./.flatpak-builder/build/*
-          retention-days: 5
+          name: ${{ env.FLATPAK_BUILDER_APPID }}-bundle
+          path: ${{ env.FLATPAK_BUILDER_APPID }}.flatpak
